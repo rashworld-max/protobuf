@@ -2142,6 +2142,8 @@ cc_test(
         "//src/google/protobuf/testing:file",
         "//src/google/protobuf/util:differencer",
         "@abseil-cpp//absl/base:config",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:reflection",
         "@abseil-cpp//absl/hash:hash_testing",
         "@abseil-cpp//absl/log:absl_check",
         "@abseil-cpp//absl/log:scoped_mock_log",

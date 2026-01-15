@@ -2732,3 +2732,9 @@ message TestAllTypesAsExtension {
     TestAllTypes ext = 10;
   }
 }
+
+message MessageWithConflictingFlagPrefixes {
+  int32 text = 1;
+  int32 base64text = 2;
+  int32 base64serialized = 3;
+}

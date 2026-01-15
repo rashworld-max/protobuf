@@ -29,6 +29,7 @@
 #include "absl/base/macros.h"
 #include "absl/container/btree_set.h"
 #include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/cord.h"
@@ -39,6 +40,7 @@
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "google/protobuf/any.h"
@@ -173,6 +175,115 @@ PROTOBUF_EXPORT std::string Utf8Format(const Message& message) {
                                     FieldReporterLevel::kUtf8Format);
 }
 
+
+Message::AbslFlagHeader Message::ConsumeAbslFlagHeader(
+    absl::string_view& text) {
+  AbslFlagHeader header;
+
+  if (text.empty()) {
+    // Whatever format is fine.
+    header.format = AbslFlagFormat::kTextFormat;
+    return header;
+  }
+
+  if (absl::ConsumePrefix(&text, ":")) {
+    header.uses_dead_char = true;
+  }
+
+  auto pos = text.find(':');
+  if (pos == text.npos) {
+    header.format = AbslFlagFormat::kTextFormat;
+    return header;
+  }
+
+  header.format_name = text.substr(0, pos);
+
+  if (header.format_name == "text") {
+    header.uses_prefix = true;
+    header.format = AbslFlagFormat::kTextFormat;
+  } else if (header.format_name == "base64text") {
+    header.uses_prefix = true;
+    header.format = AbslFlagFormat::kBase64TextFormat;
+  } else if (header.format_name == "base64serialized") {
+    header.uses_prefix = true;
+    header.format = AbslFlagFormat::kBase64Serialized;
+  } else {
+    header.format = header.uses_dead_char ? AbslFlagFormat::kError
+                                          : AbslFlagFormat::kTextFormat;
+  }
+
+  if (header.uses_prefix) {
+    text.remove_prefix(pos + 1);
+  }
+  return header;
+}
+
+bool Message::AbslParseFlagImpl(absl::string_view text, std::string& error) {
+  Clear();
+
+  auto header = ConsumeAbslFlagHeader(text);
+
+  // If we have a prefix without a dead char, verify that the message does not
+  // have a field by that name as that would be ambiguous.
+  if (!header.uses_dead_char && header.uses_prefix &&
+      GetDescriptor()->FindFieldByName(header.format_name) != nullptr) {
+    error = absl::StrFormat(
+        "Prefix `%s:` used is ambiguous with message fields. If you meant to "
+        "use this prefix, use `:%s:` instead. If you meant to use text "
+        "format, use `:text:` as a prefix.",
+        header.format_name, header.format_name);
+    return false;
+  }
+
+  std::string unescaped;
+  const auto unescape = [&] {
+    if (!absl::Base64Unescape(text, &unescaped)) {
+      error = absl::StrFormat("Invalid base64 input.");
+      return false;
+    }
+    text = unescaped;
+    return true;
+  };
+
+  switch (header.format) {
+    case AbslFlagFormat::kError:
+      error = absl::StrFormat("Unrecognized format prefix `%s`.",
+                              header.format_name);
+      return false;
+
+    case AbslFlagFormat::kBase64TextFormat:
+      if (!unescape()) return false;
+      [[fallthrough]];
+    case AbslFlagFormat::kTextFormat: {
+      TextFormat::Parser parser;
+      struct StringErrorCollector : io::ErrorCollector {
+        explicit StringErrorCollector(std::string& error) : error(error) {}
+        std::string& error;
+        void RecordError(int line, io::ColumnNumber column,
+                         absl::string_view message) override {
+          error = absl::StrFormat("(Line %v, Column %v): %v", line, column,
+                                  message);
+        }
+      } collector(error);
+      parser.RecordErrorsTo(&collector);
+      return parser.ParseFromString(text, this);
+    }
+
+    case AbslFlagFormat::kBase64Serialized:
+      return unescape() && ParseFromString(text);
+  }
+}
+
+std::string Message::AbslUnparseFlagImpl() const {
+  TextFormat::Printer printer;
+  printer.SetSingleLineMode(true);
+  printer.SetUseShortRepeatedPrimitives(true);
+  std::string str;
+  if (!printer.PrintToString(*this, &str)) {
+    ABSL_LOG(ERROR) << "Could not unparse message flag.";
+  }
+  return str;
+}
 
 // ===========================================================================
 // Implementation of the parse information tree class.
