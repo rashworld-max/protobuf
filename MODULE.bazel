@@ -116,7 +116,7 @@ register_toolchains(
 )
 
 # Define toolchains that use pre-built protoc binaries.
-prebuilt_protoc = use_extension("//bazel/private:prebuilt_protoc_extension.bzl", "protoc")
+prebuilt_protoc = use_extension("//bazel/private/oss/toolchains/prebuilt:protoc_extension.bzl", "protoc")
 use_repo(
     prebuilt_protoc,
     "prebuilt_protoc.linux_aarch_64",
